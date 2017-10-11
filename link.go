@@ -720,6 +720,28 @@ func (iptun *Iptun) Type() string {
 	return "ipip"
 }
 
+type Sittun struct {
+	LinkAttrs
+	Link       uint32
+	Local      net.IP
+	Remote     net.IP
+	Ttl        uint8
+	Tos        uint8
+	PMtuDisc   uint8
+	EncapType  uint16
+	EncapFlags uint16
+	EncapSport uint16
+	EncapDport uint16
+}
+
+func (sittun *Sittun) Attrs() *LinkAttrs {
+	return &sittun.LinkAttrs
+}
+
+func (sittun *Sittun) Type() string {
+	return "sit"
+}
+
 type Vti struct {
 	LinkAttrs
 	IKey   uint32

@@ -1800,6 +1800,10 @@ func addGretunAttrs(gre *Gretun, linkInfo *nl.RtAttr) {
 	nl.NewRtAttrChild(data, nl.IFLA_GRE_PMTUDISC, nl.Uint8Attr(gre.PMtuDisc))
 	nl.NewRtAttrChild(data, nl.IFLA_GRE_TTL, nl.Uint8Attr(gre.Ttl))
 	nl.NewRtAttrChild(data, nl.IFLA_GRE_TOS, nl.Uint8Attr(gre.Tos))
+	nl.NewRtAttrChild(data, nl.IFLA_GRE_ENCAP_TYPE, nl.Uint16Attr(gretap.EncapType))
+	nl.NewRtAttrChild(data, nl.IFLA_GRE_ENCAP_FLAGS, nl.Uint16Attr(gretap.EncapFlags))
+	nl.NewRtAttrChild(data, nl.IFLA_GRE_ENCAP_SPORT, htons(gretap.EncapSport))
+	nl.NewRtAttrChild(data, nl.IFLA_GRE_ENCAP_DPORT, htons(gretap.EncapDport))
 }
 
 func parseGretunData(link Link, data []syscall.NetlinkRouteAttr) {
@@ -1825,6 +1829,14 @@ func parseGretunData(link Link, data []syscall.NetlinkRouteAttr) {
 			gre.Tos = uint8(datum.Value[0])
 		case nl.IFLA_GRE_PMTUDISC:
 			gre.PMtuDisc = uint8(datum.Value[0])
+		case nl.IFLA_GRE_ENCAP_TYPE:
+			gre.EncapType = native.Uint16(datum.Value[0:2])
+		case nl.IFLA_GRE_ENCAP_FLAGS:
+			gre.EncapFlags = native.Uint16(datum.Value[0:2])
+		case nl.IFLA_GRE_ENCAP_SPORT:
+			gre.EncapSport = ntohs(datum.Value[0:2])
+		case nl.IFLA_GRE_ENCAP_DPORT:
+			gre.EncapDport = ntohs(datum.Value[0:2])
 		}
 	}
 }

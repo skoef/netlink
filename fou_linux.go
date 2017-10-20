@@ -4,15 +4,14 @@ package netlink
 
 import (
 	"encoding/binary"
+	"fmt"
 	"syscall"
 
 	"github.com/vishvananda/netlink/nl"
 )
 
 const (
-	FOU_FAM_ID      = 0x1d
-	FOU_FAM_VERSION = 2
-	FOU_FAM_NAME    = "fou"
+	FOU_GENL_NAME = "fou"
 )
 
 const (
@@ -40,12 +39,41 @@ const (
 	FOU_ENCAP_MAX = FOU_ENCAP_GUE
 )
 
+var fouFamilyId int
+
+func FouFamilyId() (int, error) {
+	if fouFamilyId == 0 {
+		fams, err := GenlFamilyList()
+		if err != nil {
+			return 0, err
+		}
+
+		for _, f := range fams {
+			if f.Name == FOU_GENL_NAME {
+				fouFamilyId = int(f.ID)
+				break
+			}
+		}
+
+		if fouFamilyId == 0 {
+			return fouFamilyId, fmt.Errorf("could not find genl family %s", FOU_GENL_NAME)
+		}
+	}
+
+	return fouFamilyId, nil
+}
+
 func FouAdd(f Fou) error {
 	return pkgHandle.FouAdd(f)
 }
 
 func (h *Handle) FouAdd(f Fou) error {
-	req := h.newNetlinkRequest(FOU_FAM_ID, syscall.NLM_F_ACK)
+	fam_id, err := FouFamilyId()
+	if err != nil {
+		return err
+	}
+
+	req := h.newNetlinkRequest(fam_id, syscall.NLM_F_ACK)
 
 	// int to byte for port
 	bp := make([]byte, 2)
@@ -64,7 +92,7 @@ func (h *Handle) FouAdd(f Fou) error {
 
 	req.AddRawData(raw)
 
-	_, err := req.Execute(syscall.NETLINK_GENERIC, 0)
+	_, err = req.Execute(syscall.NETLINK_GENERIC, 0)
 	if err != nil {
 		return err
 	}
@@ -77,7 +105,12 @@ func FouDel(f Fou) error {
 }
 
 func (h *Handle) FouDel(f Fou) error {
-	req := h.newNetlinkRequest(FOU_FAM_ID, syscall.NLM_F_ACK)
+	fam_id, err := FouFamilyId()
+	if err != nil {
+		return err
+	}
+
+	req := h.newNetlinkRequest(fam_id, syscall.NLM_F_ACK)
 
 	// int to byte for port
 	bp := make([]byte, 2)
@@ -94,7 +127,7 @@ func (h *Handle) FouDel(f Fou) error {
 
 	req.AddRawData(raw)
 
-	_, err := req.Execute(syscall.NETLINK_GENERIC, 0)
+	_, err = req.Execute(syscall.NETLINK_GENERIC, 0)
 	if err != nil {
 		return err
 	}
@@ -107,7 +140,12 @@ func FouList(fam int) ([]Fou, error) {
 }
 
 func (h *Handle) FouList(fam int) ([]Fou, error) {
-	req := h.newNetlinkRequest(FOU_FAM_ID, syscall.NLM_F_DUMP)
+	fam_id, err := FouFamilyId()
+	if err != nil {
+		return nil, err
+	}
+
+	req := h.newNetlinkRequest(fam_id, syscall.NLM_F_DUMP)
 
 	attrs := []*nl.RtAttr{
 		nl.NewRtAttr(FOU_ATTR_AF, []byte{uint8(fam)}),
@@ -118,13 +156,13 @@ func (h *Handle) FouList(fam int) ([]Fou, error) {
 	}
 
 	req.AddRawData(raw)
-	fous := []Fou{}
 
 	msgs, err := req.Execute(syscall.NETLINK_GENERIC, 0)
 	if err != nil {
-		return fous, err
+		return nil, err
 	}
 
+	fous := []Fou{}
 	for _, m := range msgs {
 		if f, err := deserializeFouMsg(m); err != nil {
 			return fous, err

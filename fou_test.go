@@ -1,3 +1,5 @@
+// +build linux
+
 package netlink
 
 import (
@@ -49,7 +51,11 @@ func TestFouDeserializeMsg(t *testing.T) {
 }
 
 func TestFouAddDel(t *testing.T) {
-	tearDown := setUpNetlinkTest(t)
+	// foo-over-udp was merged in 3.18 so skip these tests if the kernel is too old
+	minKernelRequired(t, 3, 18)
+
+	// the fou module is usually not compiled in the kernel so we'll load it
+	tearDown := setUpNetlinkTestWithKModule(t, "fou")
 	defer tearDown()
 
 	fou := Fou{

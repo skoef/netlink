@@ -4,10 +4,10 @@ package netlink
 
 import (
 	"encoding/binary"
-	"fmt"
-	"syscall"
+	"errors"
 
 	"github.com/vishvananda/netlink/nl"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -42,24 +42,16 @@ const (
 var fouFamilyId int
 
 func FouFamilyId() (int, error) {
-	if fouFamilyId == 0 {
-		fams, err := GenlFamilyList()
-		if err != nil {
-			return 0, err
-		}
-
-		for _, f := range fams {
-			if f.Name == FOU_GENL_NAME {
-				fouFamilyId = int(f.ID)
-				break
-			}
-		}
-
-		if fouFamilyId == 0 {
-			return fouFamilyId, fmt.Errorf("could not find genl family %s", FOU_GENL_NAME)
-		}
+	if fouFamilyId != 0 {
+		return fouFamilyId, nil
 	}
 
+	fam, err := GenlFamilyGet(FOU_GENL_NAME)
+	if err != nil {
+		return -1, err
+	}
+
+	fouFamilyId = int(fam.ID)
 	return fouFamilyId, nil
 }
 
@@ -73,7 +65,12 @@ func (h *Handle) FouAdd(f Fou) error {
 		return err
 	}
 
-	req := h.newNetlinkRequest(fam_id, syscall.NLM_F_ACK)
+	// setting ip protocol conflicts with encapsulation type GUE
+	if f.EncapType == FOU_ENCAP_GUE && f.Protocol != 0 {
+		return errors.New("GUE encapsulation doesn't specify an IP protocol")
+	}
+
+	req := h.newNetlinkRequest(fam_id, unix.NLM_F_ACK)
 
 	// int to byte for port
 	bp := make([]byte, 2)
@@ -92,7 +89,7 @@ func (h *Handle) FouAdd(f Fou) error {
 
 	req.AddRawData(raw)
 
-	_, err = req.Execute(syscall.NETLINK_GENERIC, 0)
+	_, err = req.Execute(unix.NETLINK_GENERIC, 0)
 	if err != nil {
 		return err
 	}
@@ -110,7 +107,7 @@ func (h *Handle) FouDel(f Fou) error {
 		return err
 	}
 
-	req := h.newNetlinkRequest(fam_id, syscall.NLM_F_ACK)
+	req := h.newNetlinkRequest(fam_id, unix.NLM_F_ACK)
 
 	// int to byte for port
 	bp := make([]byte, 2)
@@ -127,7 +124,7 @@ func (h *Handle) FouDel(f Fou) error {
 
 	req.AddRawData(raw)
 
-	_, err = req.Execute(syscall.NETLINK_GENERIC, 0)
+	_, err = req.Execute(unix.NETLINK_GENERIC, 0)
 	if err != nil {
 		return err
 	}
@@ -145,7 +142,7 @@ func (h *Handle) FouList(fam int) ([]Fou, error) {
 		return nil, err
 	}
 
-	req := h.newNetlinkRequest(fam_id, syscall.NLM_F_DUMP)
+	req := h.newNetlinkRequest(fam_id, unix.NLM_F_DUMP)
 
 	attrs := []*nl.RtAttr{
 		nl.NewRtAttr(FOU_ATTR_AF, []byte{uint8(fam)}),
@@ -157,19 +154,62 @@ func (h *Handle) FouList(fam int) ([]Fou, error) {
 
 	req.AddRawData(raw)
 
-	msgs, err := req.Execute(syscall.NETLINK_GENERIC, 0)
+	msgs, err := req.Execute(unix.NETLINK_GENERIC, 0)
 	if err != nil {
 		return nil, err
 	}
 
-	fous := []Fou{}
+	fous := make([]Fou, 0, len(msgs))
 	for _, m := range msgs {
-		if f, err := deserializeFouMsg(m); err != nil {
+		f, err := deserializeFouMsg(m)
+		if err != nil {
 			return fous, err
-		} else {
-			fous = append(fous, f)
 		}
+
+		fous = append(fous, f)
 	}
 
 	return fous, nil
+}
+
+func deserializeFouMsg(msg []byte) (Fou, error) {
+	// we'll skip to byte 4 to first attribute
+	msg = msg[3:]
+	var shift int
+	fou := Fou{}
+
+	for {
+		// attribute header is at least 16 bits
+		if len(msg) < 4 {
+			return fou, ErrAttrHeaderTruncated
+		}
+
+		lgt := int(binary.BigEndian.Uint16(msg[0:2]))
+		if len(msg) < lgt+4 {
+			return fou, ErrAttrBodyTruncated
+		}
+		attr := binary.BigEndian.Uint16(msg[2:4])
+
+		shift = lgt + 3
+		switch attr {
+		case FOU_ATTR_AF:
+			fou.Family = int(msg[5])
+		case FOU_ATTR_PORT:
+			fou.Port = int(binary.BigEndian.Uint16(msg[5:7]))
+			// port is 2 bytes
+			shift = lgt + 2
+		case FOU_ATTR_IPPROTO:
+			fou.Protocol = int(msg[5])
+		case FOU_ATTR_TYPE:
+			fou.EncapType = int(msg[5])
+		}
+
+		msg = msg[shift:]
+
+		if len(msg) < 4 {
+			break
+		}
+	}
+
+	return fou, nil
 }
